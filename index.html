@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>The Circuit Cat</title>
+  <style>
+    :root { --slab: #52456E; --ink: #2E2440; --lip: #C9C7D6; --sky1: #9FB8F0; --sky2: #FBE3D6; --green: #6CC24A; }
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: var(--ink); touch-action: none;
+                 -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+    #wrap { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+            background: linear-gradient(var(--sky1), var(--sky2)); }
+    /* Phones: fill the whole screen (the game UI anchors to the safe area, any tall aspect works).
+       Wide screens (desktop / tablet landscape): a portrait column, never wider than 10:16. */
+    #unity-canvas { height: 100vh; height: 100dvh; width: min(100vw, calc(100dvh * 10 / 16));
+                    display: block; background: var(--ink); }
+    #loading { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+               gap: 18px; font: 700 20px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif; color: #fff;
+               background: #fff; }
+    #loading img { width: min(64vw, 300px); height: auto; }
+    #bar { width: min(70vw, 340px); height: 26px; border: 5px solid var(--ink); border-radius: 18px; background: var(--slab); overflow: hidden; }
+    #fill { height: 100%; width: 0%; background: var(--green); border-radius: 12px; transition: width .2s; }
+    #status { color: var(--ink); font-size: 16px; opacity: .8; }
+    /* Portrait-only game: phones held sideways get a rotate prompt. */
+    #rotate { display: none; position: fixed; inset: 0; z-index: 10; align-items: center; justify-content: center;
+              flex-direction: column; gap: 14px; background: var(--slab); color: #fff; font: 700 22px system-ui, sans-serif; }
+    #rotate .phone { width: 46px; height: 80px; border: 6px solid #fff; border-radius: 12px; animation: turn 1.6s ease-in-out infinite; }
+    @keyframes turn { 0%, 30% { transform: rotate(-90deg); } 60%, 100% { transform: rotate(0deg); } }
+    @media (orientation: landscape) and (max-height: 600px) { #rotate { display: flex; } }
+    #err { display: none; max-width: 80vw; color: #b00020; font-size: 14px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div id="rotate"><div class="phone"></div><div>Please rotate your phone</div></div>
+  <div id="wrap"><canvas id="unity-canvas" tabindex="-1"></canvas></div>
+  <div id="loading">
+    <img src="studio_logo.png" alt="Klevoo Games">
+    <div id="bar"><div id="fill"></div></div>
+    <div id="status">Loading…</div>
+    <div id="err"></div>
+  </div>
+  <script>
+    const BUILD = "Build";
+    const files = {
+      loader: "WebGL.loader.js",
+      data: "WebGL.data.unityweb",
+      framework: "WebGL.framework.js.unityweb",
+      code: "WebGL.wasm.unityweb",
+    };
+    const fill = document.getElementById("fill"), status = document.getElementById("status"), err = document.getElementById("err");
+
+    // Big files may be split into <name>.part0, .part1 … (listed in Build/parts.json) to fit static-host limits.
+    // They are fetched, joined into one Blob and handed to Unity as a blob: URL.
+    async function resolveUrl(name, parts, onBytes) {
+      const n = parts[name];
+      if (!n) return BUILD + "/" + name;
+      const chunks = [];
+      for (let i = 0; i < n; i++) {
+        const r = await fetch(BUILD + "/" + name + ".part" + i + (parts.__suffix || ""));
+        if (!r.ok) throw new Error("Missing " + name + ".part" + i);
+        const b = await r.arrayBuffer();
+        chunks.push(b); onBytes(b.byteLength);
+      }
+      return URL.createObjectURL(new Blob(chunks));   // hosts with a file-type allow-list: parts carry parts.__suffix
+    }
+
+    (async () => {
+      try {
+        let parts = {};
+        try { const r = await fetch(BUILD + "/parts.json"); if (r.ok) parts = await r.json(); } catch (e) {}
+        let got = 0;
+        const total = parts.__bytes || 0;
+        const onBytes = b => { got += b; if (total) fill.style.width = Math.min(60, got / total * 60) + "%"; status.textContent = "Downloading… " + (got / 1048576).toFixed(1) + " MB"; };
+        const config = {
+          dataUrl: await resolveUrl(files.data, parts, onBytes),
+          frameworkUrl: await resolveUrl(files.framework, parts, onBytes),
+          codeUrl: await resolveUrl(files.code, parts, onBytes),
+          streamingAssetsUrl: "StreamingAssets",
+          companyName: "Klevoo Games",
+          productName: "The Circuit Cat",
+          productVersion: "0.1.0",
+          devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+        };
+        const s = document.createElement("script");
+        s.src = BUILD + "/" + files.loader;
+        s.onload = () => {
+          createUnityInstance(document.querySelector("#unity-canvas"), config, p => {
+            fill.style.width = (total ? 60 + p * 40 : p * 100) + "%";
+            status.textContent = "Starting… " + Math.round(p * 100) + "%";
+          }).then(() => { document.getElementById("loading").style.display = "none"; })
+            .catch(m => { err.style.display = "block"; err.textContent = m; });
+        };
+        document.body.appendChild(s);
+      } catch (e) { err.style.display = "block"; err.textContent = e.message || e; }
+    })();
+  </script>
+</body>
+</html>
